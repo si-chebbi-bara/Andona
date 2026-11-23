@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { chat } from "./llm/index.js";
+import authRouter from "./routes/auth.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,6 +12,9 @@ app.use(express.json());
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "OK", app:"Andona" });
 });
+
+// /auth/register and /auth/login
+app.use("/auth", authRouter);
 
 // Body: { messages: [{ role, content }], provider?: "gemini" | "ollama" }
 app.post("/chat", async (req, res) => {
