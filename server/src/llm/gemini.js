@@ -1,0 +1,37 @@
+export async function chat(messages) {
+  const systemText = messages
+    .filter((m) => m.role === "system")
+    .map((m) => m.content)
+    .join("\n");
+
+  const contents = messages
+    .filter((m) => m.role !== "system")
+    .map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
+
+  const body = { contents };
+  if (systemText) {
+    body.systemInstruction = { parts: [{ text: systemText }] };
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL}:generateContent`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": process.env.GEMINI_API_KEY,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Gemini error ${res.status}`);
+  }
+
+  const data = await res.json();
+  const parts = data.candidates?.[0]?.content?.parts ?? [];
+  return parts.map((p) => p.text ?? "").join("");
+}
