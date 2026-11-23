@@ -1,17 +1,20 @@
-import {chat } from "./llm/ollama.js";
+// Ollama provider: sends the conversation to the local Ollama server
+// and returns the model's reply as plain text.
+export async function chat(messages) {
+  const res = await fetch(`${process.env.OLLAMA_URL}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: process.env.OLLAMA_MODEL,
+      messages, // Ollama uses the same { role, content } format as we do
+      stream: false, // get the whole answer in one response
+    }),
+  });
 
-app.post("/chat", async (req, res) => {
-  try {
-    const { messages } = req.body;
-
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return res.status(400).json({ error: "Invalid format. Expected a non-empty messages array." });
-    }
-
-    const reply = await chat(messages);
-    res.json({ reply });
-  } catch (error) {
-    console.error("Error in /chat route:", error);
-    res.status(500).json({ error: "AI request failed" });
+  if (!res.ok) {
+    throw new Error(`Ollama error ${res.status}`);
   }
-});
+
+  const data = await res.json();
+  return data.message?.content ?? "";
+}
