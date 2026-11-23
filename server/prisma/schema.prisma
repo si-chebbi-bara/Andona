@@ -1,7 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
+// Andona database schema (PostgreSQL), built from the E-A model in the report.
+// Models use PascalCase, tables are mapped to snake_case plural names (@@map).
 
 generator client {
   provider = "prisma-client"
@@ -10,4 +8,429 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// ─────────────────────────── Enums ───────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum AccountStatus {
+  ACTIVE
+  BANNED
+}
+
+enum Language {
+  EN
+  FR
+}
+
+enum CefrLevel {
+  A1
+  A2
+  B1
+  B2
+  C1
+  C2
+}
+
+enum Theme {
+  SYSTEM
+  DARK
+  LIGHT
+}
+
+enum Provider {
+  GEMINI
+  OLLAMA
+}
+
+enum ConversationType {
+  TUTOR
+  COACH
+  LEVEL_TEST
+}
+
+enum Sender {
+  USER
+  ASSISTANT
+}
+
+enum InputType {
+  TEXT
+  VOICE
+}
+
+enum QuizMode {
+  PRACTICE
+  EXAM
+}
+
+enum QuestionType {
+  MCQ
+  OPEN
+}
+
+enum MemoryKind {
+  WEAK_TOPIC
+  MISTAKE
+  GOAL
+  LEVEL
+}
+
+enum TaskType {
+  QUIZ
+  MOCK_EXAM
+  PRACTICE
+  WEEKLY_SUMMARY
+}
+
+enum RepeatRule {
+  ONCE
+  DAILY
+  WEEKLY
+}
+
+enum RunStatus {
+  DONE
+  FAILED
+}
+
+enum AdminActionType {
+  BAN
+  UNBAN
+  CHANGE_ROLE
+}
+
+// ─────────────────────────── Accounts ───────────────────────────
+
+// A person using the app. The role decides learner (USER) or admin (ADMIN).
+model User {
+  id           Int           @id @default(autoincrement())
+  name         String
+  email        String        @unique
+  passwordHash String
+  role         Role          @default(USER)
+  status       AccountStatus @default(ACTIVE)
+  createdAt    DateTime      @default(now())
+  lastLoginAt  DateTime?
+
+  settings        UserSettings?
+  courses         Course[]         @relation("CourseOwner")
+  conversations   Conversation[]
+  quizzes         Quiz[]
+  attempts        QuizAttempt[]
+  vocabulary      VocabularyWord[]
+  memories        LearnerMemory[]
+  tasks           ScheduledTask[]
+  usageLogs       UsageLog[]
+  scenarios       Scenario[]       @relation("ScenarioCreator")
+  actionsDone     AdminAction[]    @relation("ActionAdmin")
+  actionsReceived AdminAction[]    @relation("ActionTarget")
+  configUpdates   AppConfig[]      @relation("ConfigUpdater")
+
+  @@map("users")
+}
+
+// One user's preferences (exactly one row per user).
+model UserSettings {
+  id               Int        @id @default(autoincrement())
+  userId           Int        @unique
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  uiLanguage       Language   @default(EN)
+  practiceLanguage Language   @default(EN)
+  level            CefrLevel? // empty until the level test
+  theme            Theme      @default(SYSTEM)
+  ttsEnabled       Boolean    @default(true)
+  voice            String?
+  speechRate       Float      @default(1.0)
+  aiProvider       Provider   @default(GEMINI)
+
+  @@map("user_settings")
+}
+
+// ─────────────────────────── Study Tutor ───────────────────────────
+
+// A course: a user's own, or an official one from the admin (no owner).
+model Course {
+  id          Int      @id @default(autoincrement())
+  ownerId     Int?
+  owner       User?    @relation("CourseOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  isOfficial  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  documents     Document[]
+  quizzes       Quiz[]
+  conversations Conversation[]
+  tasks         ScheduledTask[]
+
+  @@map("courses")
+}
+
+// An uploaded PDF inside a course, with its AI summary.
+model Document {
+  id         Int      @id @default(autoincrement())
+  courseId   Int
+  course     Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  fileName   String
+  pageCount  Int
+  summary    String? // written by the AI after upload
+  uploadedAt DateTime @default(now())
+
+  pages DocumentPage[]
+
+  @@map("documents")
+}
+
+// The text of one PDF page, so answers can cite "p. N".
+model DocumentPage {
+  id         Int      @id @default(autoincrement())
+  documentId Int
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  pageNumber Int
+  text       String
+
+  @@unique([documentId, pageNumber])
+  @@map("document_pages")
+}
+
+// A quiz or mock exam generated from a course for one user.
+model Quiz {
+  id           Int      @id @default(autoincrement())
+  courseId     Int
+  course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdForId Int
+  createdFor   User     @relation(fields: [createdForId], references: [id], onDelete: Cascade)
+  mode         QuizMode
+  timeLimitMin Int? // only for EXAM mode
+  createdAt    DateTime @default(now())
+
+  questions Question[]
+  attempts  QuizAttempt[]
+  taskRuns  TaskRun[]
+
+  @@map("quizzes")
+}
+
+// One question of a quiz (multiple choice or open).
+model Question {
+  id          Int          @id @default(autoincrement())
+  quizId      Int
+  quiz        Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  type        QuestionType
+  prompt      String
+  options     String[] // the choices for MCQ, empty for OPEN
+  answer      String
+  explanation String?
+  pageRef     Int? // course page the question comes from
+
+  answers Answer[]
+
+  @@map("questions")
+}
+
+// One try at a quiz by a user, with the final score.
+model QuizAttempt {
+  id         Int       @id @default(autoincrement())
+  quizId     Int
+  quiz       Quiz      @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  userId     Int
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score      Float? // set when the attempt is finished
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  answers Answer[]
+
+  @@map("quiz_attempts")
+}
+
+// The user's answer to one question in an attempt.
+model Answer {
+  id         Int         @id @default(autoincrement())
+  attemptId  Int
+  attempt    QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  questionId Int
+  question   Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  given      String
+  isCorrect  Boolean? // open answers are graded later by the AI
+  feedback   String?
+
+  @@map("answers")
+}
+
+// ─────────────────────────── Conversations (tutor + coach) ───────────────────────────
+
+// A chat session: with the tutor about a course, or with the coach in a scenario.
+model Conversation {
+  id         Int              @id @default(autoincrement())
+  userId     Int
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId   Int?
+  course     Course?          @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  scenarioId Int?
+  scenario   Scenario?        @relation(fields: [scenarioId], references: [id], onDelete: SetNull)
+  type       ConversationType
+  title      String?
+  startedAt  DateTime         @default(now())
+  endedAt    DateTime?
+
+  messages Message[]
+  memories LearnerMemory[]
+  taskRuns TaskRun[]
+
+  @@map("conversations")
+}
+
+// One message in a conversation, from the user or from the AI.
+model Message {
+  id             Int          @id @default(autoincrement())
+  conversationId Int
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         Sender
+  content        String
+  inputType      InputType    @default(TEXT)
+  pageRefs       Int[] // course pages cited in a tutor answer
+  correction     Json? // coach correction: { said, corrected, why }
+  provider       Provider? // which AI answered (AI messages only)
+  createdAt      DateTime     @default(now())
+
+  @@map("messages")
+}
+
+// ─────────────────────────── Language Coach ───────────────────────────
+
+// A role-play situation created by the admin (job interview, café...).
+model Scenario {
+  id          Int       @id @default(autoincrement())
+  createdById Int
+  createdBy   User      @relation("ScenarioCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  title       String
+  language    Language
+  level       CefrLevel
+  aiRole      String // who the AI plays
+  goal        String
+  openingLine String
+  isActive    Boolean   @default(true)
+
+  conversations Conversation[]
+  tasks         ScheduledTask[]
+
+  @@map("scenarios")
+}
+
+// A word the user saved with tap-to-translate.
+model VocabularyWord {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  word        String
+  translation String
+  language    Language
+  example     String?
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, word, language])
+  @@map("vocabulary_words")
+}
+
+// ─────────────────────────── Memory + scheduled tasks ───────────────────────────
+
+// A short fact Andona remembers about the learner across conversations.
+model LearnerMemory {
+  id                   Int           @id @default(autoincrement())
+  userId               Int
+  user                 User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind                 MemoryKind
+  content              String
+  sourceConversationId Int?
+  sourceConversation   Conversation? @relation(fields: [sourceConversationId], references: [id], onDelete: SetNull)
+  createdAt            DateTime      @default(now())
+
+  @@map("learner_memories")
+}
+
+// A task the user scheduled ("every day at 8, quiz me on Chapter 3").
+// It targets a course OR a scenario, never both (CHECK in the migration).
+model ScheduledTask {
+  id         Int        @id @default(autoincrement())
+  userId     Int
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId   Int?
+  course     Course?    @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  scenarioId Int?
+  scenario   Scenario?  @relation(fields: [scenarioId], references: [id], onDelete: SetNull)
+  type       TaskType
+  repeat     RepeatRule
+  daysOfWeek Int[] // for WEEKLY: 0 = Sunday ... 6 = Saturday
+  time       String // "HH:MM"
+  runAt      DateTime? // for ONCE
+  enabled    Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+
+  runs TaskRun[]
+
+  @@map("scheduled_tasks")
+}
+
+// One run of a scheduled task, with a link to what it produced.
+model TaskRun {
+  id             Int           @id @default(autoincrement())
+  taskId         Int
+  task           ScheduledTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  ranAt          DateTime      @default(now())
+  status         RunStatus
+  quizId         Int?
+  quiz           Quiz?         @relation(fields: [quizId], references: [id], onDelete: SetNull)
+  conversationId Int?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@map("task_runs")
+}
+
+// ─────────────────────────── Admin + technical ───────────────────────────
+
+// AI usage of one user on one day: enforces the daily limit, feeds admin stats.
+model UsageLog {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  day          DateTime @db.Date
+  aiRequests   Int      @default(0)
+  voiceSeconds Int      @default(0)
+
+  @@unique([userId, day])
+  @@map("usage_logs")
+}
+
+// App-wide settings edited by the admin. Always one row, with id = 1.
+model AppConfig {
+  id              Int      @id @default(1)
+  defaultProvider Provider @default(GEMINI)
+  model           String
+  tutorPrompt     String
+  coachPrompt     String
+  dailyAiLimit    Int      @default(50)
+  updatedById     Int?
+  updatedBy       User?    @relation("ConfigUpdater", fields: [updatedById], references: [id], onDelete: Restrict)
+  updatedAt       DateTime @updatedAt
+
+  @@map("app_config")
+}
+
+// A log line of what an admin did to a user (ban, unban, change role).
+model AdminAction {
+  id           Int             @id @default(autoincrement())
+  adminId      Int
+  admin        User            @relation("ActionAdmin", fields: [adminId], references: [id], onDelete: Restrict)
+  targetUserId Int
+  targetUser   User            @relation("ActionTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+  type         AdminActionType
+  createdAt    DateTime        @default(now())
+
+  @@map("admin_actions")
 }
