@@ -25,6 +25,8 @@ export async function chat(messages) {
       "x-goog-api-key": process.env.GEMINI_API_KEY,
     },
     body: JSON.stringify(body),
+    // Give up after 20 s so a slow Gemini triggers the Ollama fallback
+    signal: AbortSignal.timeout(20000),
   });
 
   if (!res.ok) {
