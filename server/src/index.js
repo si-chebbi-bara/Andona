@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { chat } from "./llm/index.js";
 import authRouter from "./routes/auth.js";
-import { requireAuth, requireAdmin } from "./auth/middleware.js";
+import { requireAuth } from "./auth/middleware.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,11 +16,6 @@ app.get("/health", (req, res) => {
 
 // /auth/register and /auth/login
 app.use("/auth", authRouter);
-
-// Admin-only test route, to check requireAdmin (real admin routes come in Step 8)
-app.get("/admin/ping", requireAuth, requireAdmin, (req, res) => {
-  res.json({ ok: true, admin: req.user.email });
-});
 
 // Needs a login. Body: { messages: [{ role, content }], provider?: "gemini" | "ollama" }
 app.post("/chat", requireAuth, async (req, res) => {
