@@ -30,7 +30,8 @@ export async function chat(messages) {
   });
 
   if (!res.ok) {
-    throw new Error(`Gemini error ${res.status}`);
+    const details = await res.text(); // Google explains the problem in the body
+    throw new Error(`Gemini error ${res.status}: ${details.slice(0, 300)}`);
   }
 
   const data = await res.json();
