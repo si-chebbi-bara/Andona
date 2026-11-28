@@ -3,6 +3,7 @@ import cors from 'cors';
 import { chat } from "./llm/index.js";
 import authRouter from "./routes/auth.js";
 import { requireAuth } from "./auth/middleware.js";
+import { checkDailyLimit, recordUsage } from "./usage.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,7 +19,7 @@ app.get("/health", (req, res) => {
 app.use("/auth", authRouter);
 
 // Needs a login. Body: { messages: [{ role, content }], provider?: "gemini" | "ollama" }
-app.post("/chat", requireAuth, async (req, res) => {
+app.post("/chat", requireAuth, checkDailyLimit, async (req, res) => {
   const { messages, provider } = req.body ?? {};
 
   if (!Array.isArray(messages) || messages.length === 0) {
@@ -27,6 +28,7 @@ app.post("/chat", requireAuth, async (req, res) => {
 
   try {
     const result = await chat(messages, provider); // { reply, provider }
+    await recordUsage(req.user.id); // count only successful replies
     res.json(result);
   } catch (error) {
     console.error("All AI providers failed:", error.message);
